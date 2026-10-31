@@ -1,24 +1,28 @@
-# VANTA Launcher 0.4 — Qt interface
+# VANTA Launcher 0.5
 
-Новая оболочка лаунчера на PySide6 / Qt. Это ранняя функциональная версия.
+Qt-based Minecraft Java launcher with selectable game directory and direct launch through Microsoft authentication.
 
-## Интерфейс
-- Главная страница с игровой карточкой и действиями.
-- Разделы «Версии», «Моды» и «Настройки».
-- Список JAR-модов с включением/выключением через суффикс `.disabled`.
-- Адаптивная компоновка, боковая навигация и статус установки.
+## Features
+- Select a custom Minecraft game directory; the selection is saved in VANTA settings.
+- Download and verify official Minecraft Java 1.21.11 files into that directory.
+- Install Fabric Loader, Fabric API, and Sodium in the selected directory.
+- Sign in through the system browser using Microsoft OAuth (PKCE).
+- Launch the installed Fabric profile directly from VANTA after Microsoft confirms Minecraft: Java Edition ownership.
+- Manage local JAR mods by enabling/disabling them.
 
-## Установка
-- Minecraft Java Edition 1.21.11.
-- Fabric Loader, Fabric API и Sodium устанавливаются через Modrinth/Fabric.
-- Для установки требуется Java 21 x64.
-- Кнопка «Играть» открывает установленный игровой лаунчер; прямой запуск и авторизация в VANTA пока не реализованы.
+## Microsoft app setup (required for direct launch)
+VANTA does not embed a third-party OAuth client ID. Provide the Application (client) ID of your own Microsoft Entra app in Settings.
 
-## Сборка Windows
-GitHub Actions собирает приложение в формате onedir. Скачай artifact `VANTA-Launcher-Windows`, распакуй всю папку и запускай `VANTA-Launcher.exe`. Не перемещай EXE отдельно от соседних файлов.
+Configure the app as a public desktop/mobile client and add the loopback redirect URI `http://localhost`. Microsoft requires an app registration and Minecraft Services permission for the OAuth client. Do not paste your Microsoft password or access token into VANTA; sign-in happens in the system browser.
 
-Локально:
-```powershell
-python -m pip install -r requirements.txt
-pyinstaller --noconfirm --clean --onedir --windowed --name VANTA-Launcher --collect-all PySide6 vanta_launcher_qt.py
-```
+The Microsoft account must own Minecraft: Java Edition. No offline/cracked authentication is provided.
+
+## Install and run
+1. Select a folder in Settings (for example `D:\\Games\\VANTA\\Minecraft`).
+2. Click Install / Restore VANTA. The launcher downloads official game files, then Fabric and the two base mods.
+3. Set the Microsoft Client ID in Settings.
+4. Sign in through Microsoft in the browser.
+5. Click Play. VANTA launches the Fabric profile directly.
+
+## Build Windows
+GitHub Actions builds an onedir package. Download the `VANTA-Launcher-Windows` artifact, extract the complete folder, and run `VANTA-Launcher.exe`. Do not move the EXE separately from its runtime files.
