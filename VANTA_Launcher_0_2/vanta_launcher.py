@@ -808,12 +808,12 @@ def run_self_test():
     root = tk.Tk()
     root.withdraw()
     app = VantaApp(root)
-    for page in ("home", "install", "settings", "home"):
+    for page in ("home", "versions", "mods", "settings", "home"):
         app.show_page(page)
         root.update_idletasks()
         root.update()
 
-    if set(app.nav_buttons) != {"home", "install", "settings"}:
+    if set(app.nav_buttons) != {"home", "versions", "mods", "settings"}:
         raise RuntimeError("Self-test: не все разделы интерфейса созданы.")
     if not app.action_buttons or any(not str(button.cget("command")) for button in app.action_buttons):
         raise RuntimeError("Self-test: не все кнопки получили обработчики.")
