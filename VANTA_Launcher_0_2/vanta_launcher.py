@@ -280,8 +280,22 @@ if __name__ == "__main__":
 
     # CI smoke test: initialize Tcl, build the real UI, update it, and exit.
     if "--self-test" in sys.argv:
+        # Verify Tcl is loaded from the application bundle, not a runner/system install.
+        tcl_folder = Path(os.environ.get("TCL_LIBRARY", ""))
+        init_script = tcl_folder / "init.tcl"
+        if not init_script.is_file():
+            raise RuntimeError(f"Self-test: init.tcl is missing from {tcl_folder}")
+
         tcl = tk.Tcl()
-        tcl.eval("info library")
+        actual_tcl_folder = Path(tcl.eval("info library")).resolve()
+        expected_tcl_folder = tcl_folder.resolve()
+        if os.path.normcase(str(actual_tcl_folder)) != os.path.normcase(str(expected_tcl_folder)):
+            raise RuntimeError(
+                f"Self-test loaded Tcl from {actual_tcl_folder}, "
+                f"not the bundled folder {expected_tcl_folder}"
+            )
+        tcl.eval("info tclversion")
+
         test_root = tk.Tk()
         test_root.withdraw()
         VantaApp(test_root)
