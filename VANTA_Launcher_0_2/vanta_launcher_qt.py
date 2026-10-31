@@ -7,7 +7,7 @@ import urllib.request
 import urllib.parse
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal, QUrl
+from PySide6.QtCore import Qt, QThread, Signal, QUrl, QTimer
 from PySide6.QtGui import QColor, QPainter, QLinearGradient, QFont
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QPushButton,
@@ -576,8 +576,18 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("VANTA Launcher")
     window = VantaWindow()
+
+    if "--self-test" in sys.argv:
+        # Create and render the actual Qt window, then exit automatically for CI.
+        window.resize(1100, 700)
+        window.show()
+        app.processEvents()
+        QTimer.singleShot(1200, app.quit)
+        sys.exit(app.exec())
+
     window.show()
     sys.exit(app.exec())
+
 
 if __name__ == "__main__":
     main()
