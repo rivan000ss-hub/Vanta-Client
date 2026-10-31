@@ -12,7 +12,7 @@ from tkinter import messagebox
 from pathlib import Path
 
 APP_NAME = "VANTA"
-APP_VERSION = "0.2"
+APP_VERSION = "0.3"
 MC_VERSION = "1.21.11"
 FABRIC_META = "https://meta.fabricmc.net/v2/versions/installer"
 MODRINTH_API = "https://api.modrinth.com/v2/project/{}/version"
@@ -116,8 +116,8 @@ class VantaApp:
     def __init__(self, root):
         self.root = root
         root.title("VANTA Launcher")
-        root.geometry("1240x790")
-        root.minsize(1040, 680)
+        root.geometry("1080x680")
+        root.minsize(860, 580)
         root.configure(bg="#090C12")
         root.protocol("WM_DELETE_WINDOW", self.close_app)
 
@@ -201,7 +201,7 @@ class VantaApp:
         self.build_sidebar()
 
         header = tk.Frame(main, bg=self.colors["bg"], height=82)
-        header.pack(fill="x", padx=30, pady=(17, 0))
+        header.pack(fill="x", padx=22, pady=(12, 0))
         header.pack_propagate(False)
 
         header_left = tk.Frame(header, bg=self.colors["bg"])
@@ -224,7 +224,7 @@ class VantaApp:
         self.header_status.pack(side="left", pady=27)
 
         self.content = tk.Frame(main, bg=self.colors["bg"])
-        self.content.pack(fill="both", expand=True, padx=30, pady=(0, 22))
+        self.content.pack(fill="both", expand=True, padx=22, pady=(0, 16))
 
     def build_sidebar(self):
         brand = tk.Frame(self.sidebar, bg=self.colors["sidebar"])
@@ -319,25 +319,25 @@ class VantaApp:
     def render_home(self):
         hero_outer, hero = self.card(self.content, 0, 0, bg="#111A2B")
         hero_outer.pack(fill="x", pady=(0, 16))
-        art = tk.Canvas(hero, height=292, bg="#111A2B", highlightthickness=0)
+        art = tk.Canvas(hero, height=238, bg="#111A2B", highlightthickness=0)
         art.pack(fill="x")
         art.bind("<Configure>", self.draw_hero)
         self.draw_hero()
 
         badge_row = tk.Frame(hero, bg="#111A2B")
-        badge_row.place(x=27, y=22)
+        badge_row.place(x=22, y=17)
         badge_bg = "#203C38" if self.fabric_profile else "#382F25"
         badge_text = "●  ИГРА УСТАНОВЛЕНА" if self.fabric_profile else "●  ОЖИДАЕТ УСТАНОВКИ"
         self.label(badge_row, badge_text, 8, self.colors["green"] if self.fabric_profile else "#E7B66A", True, bg=badge_bg).pack(ipadx=10, ipady=6)
 
         title = tk.Frame(hero, bg="#111A2B")
-        title.place(relx=0.035, rely=0.39, anchor="w")
+        title.place(relx=0.035, rely=0.40, anchor="w")
         self.label(title, "VANTA", 31, self.colors["text"], True, bg="#111A2B").pack(anchor="w")
         self.label(title, f"Minecraft Java Edition  •  {MC_VERSION}  •  Fabric", 10, "#C0C9DA", bg="#111A2B").pack(anchor="w", pady=(2, 11))
         self.label(title, "Твоя сборка. Твои правила.", 9, "#A5B0C5", bg="#111A2B").pack(anchor="w")
 
         actions = tk.Frame(hero, bg="#111A2B")
-        actions.place(relx=0.965, rely=0.86, anchor="e")
+        actions.place(relx=0.965, rely=0.88, anchor="e")
         self.button(actions, "↻  ОБНОВИТЬ", self.start_install, compact=True).pack(side="left", padx=(0, 8))
         self.button(actions, "▶  ИГРАТЬ", self.play, primary=True).pack(side="left")
 
