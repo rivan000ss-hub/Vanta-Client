@@ -145,10 +145,13 @@ class VantaApp:
         )
 
     def card(self, parent, padx=20, pady=18, bg=None):
+        color = bg or C["panel"]
         outer = tk.Frame(parent, bg=C["line"], bd=0, highlightthickness=0)
-        inner = tk.Frame(outer, bg=bg or C["panel"])
-        inner.pack(fill="both", expand=True, padx=padx, pady=pady)
-        return outer, inner
+        surface = tk.Frame(outer, bg=color)
+        surface.pack(fill="both", expand=True, padx=1, pady=1)
+        body = tk.Frame(surface, bg=color)
+        body.pack(fill="both", expand=True, padx=padx, pady=pady)
+        return outer, body
 
     def button(self, parent, text, command, primary=False, compact=False):
         base = C["accent"] if primary else C["panel2"]
