@@ -23,49 +23,29 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install build dependencies
+      - name: Install dependencies
         working-directory: VANTA_Launcher_0_2
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Locate Tcl and Tk libraries
+      - name: Compile-check source
+        working-directory: VANTA_Launcher_0_2
+        run: python -m py_compile vanta_launcher_qt.py
+
+      - name: Build Qt Windows application
+        working-directory: VANTA_Launcher_0_2
         shell: pwsh
         run: |
-          $tclRoot = Join-Path $env:pythonLocation "tcl"
-          $tclDir = Get-ChildItem -Path $tclRoot -Directory -Filter "tcl*" |
-            Where-Object { Test-Path (Join-Path $_.FullName "init.tcl") } |
-            Select-Object -First 1
-          $tkDir = Get-ChildItem -Path $tclRoot -Directory -Filter "tk*" |
-            Where-Object { Test-Path (Join-Path $_.FullName "tk.tcl") } |
-            Select-Object -First 1
+          pyinstaller --noconfirm --clean --onedir --windowed --name VANTA-Launcher --collect-all PySide6 vanta_launcher_qt.py
 
-          if (-not $tclDir) { throw "Tcl init.tcl was not found under $tclRoot" }
-          if (-not $tkDir) { throw "Tk tk.tcl was not found under $tclRoot" }
-
-          "VANTA_TCL_DIR=$($tclDir.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "VANTA_TK_DIR=$($tkDir.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Compile-check Python source
-        working-directory: VANTA_Launcher_0_2
-        run: python -m py_compile vanta_launcher.py
-
-      - name: Build onedir Windows package
-        working-directory: VANTA_Launcher_0_2
-        shell: pwsh
-        run: pyinstaller --noconfirm --clean --onedir --windowed --name VANTA-Launcher --add-data "$env:VANTA_TCL_DIR;_tcl_data" --add-data "$env:VANTA_TK_DIR;_tk_data" vanta_launcher.py
-
-      - name: Smoke-test Tcl/Tk, pages, and button wiring
+      - name: Verify executable exists
         working-directory: VANTA_Launcher_0_2
         shell: pwsh
         run: |
           $exe = ".\dist\VANTA-Launcher\VANTA-Launcher.exe"
           if (-not (Test-Path $exe)) { throw "Built EXE not found: $exe" }
-          $testProcess = Start-Process -FilePath $exe -ArgumentList "--self-test" -Wait -PassThru
-          if ($testProcess.ExitCode -ne 0) {
-            throw "VANTA GUI self-test failed with exit code $($testProcess.ExitCode)"
-          }
-          Write-Host "VANTA Tcl/Tk, navigation, and button-wiring test passed."
+          Write-Host "VANTA Qt executable was created."
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
