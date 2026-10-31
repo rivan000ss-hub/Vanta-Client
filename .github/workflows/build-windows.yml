@@ -36,13 +36,13 @@ jobs:
       - name: Build Qt Windows application
         working-directory: VANTA_Launcher_0_2
         shell: pwsh
-        run: pyinstaller --noconfirm --clean --onedir --windowed --name VANTA-Launcher vanta_launcher_qt.py
+        run: pyinstaller --noconfirm --clean --onedir --windowed --name VANTA-Launcher --collect-all PySide6 --collect-all minecraft_launcher_lib vanta_launcher_qt.py
 
       - name: Smoke-test packaged Qt window
         working-directory: VANTA_Launcher_0_2
         shell: pwsh
         run: |
-          $exe = ".\dist\VANTA-Launcher\VANTA-Launcher.exe"
+          $exe = ".\\dist\\VANTA-Launcher\\VANTA-Launcher.exe"
           if (-not (Test-Path $exe)) { throw "Built EXE not found: $exe" }
           $testProcess = Start-Process -FilePath $exe -ArgumentList "--self-test" -Wait -PassThru
           if ($testProcess.ExitCode -ne 0) {
