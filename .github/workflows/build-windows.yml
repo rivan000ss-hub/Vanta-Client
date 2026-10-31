@@ -52,25 +52,28 @@ jobs:
         working-directory: VANTA_Launcher_0_2
         run: python -m py_compile vanta_launcher.py
 
-      - name: Build EXE with explicit Tcl/Tk data
+      - name: Build onedir Windows package
         working-directory: VANTA_Launcher_0_2
         shell: pwsh
-        run: pyinstaller --noconfirm --clean --onefile --windowed --name VANTA-Launcher --add-data "$env:VANTA_TCL_DIR;_tcl_data" --add-data "$env:VANTA_TK_DIR;_tk_data" vanta_launcher.py
+        run: pyinstaller --noconfirm --clean --onedir --windowed --name VANTA-Launcher --add-data "$env:VANTA_TCL_DIR;_tcl_data" --add-data "$env:VANTA_TK_DIR;_tk_data" vanta_launcher.py
 
-      - name: Smoke-test packaged GUI startup
+      - name: Smoke-test bundled Tcl/Tk and GUI
         working-directory: VANTA_Launcher_0_2
         shell: pwsh
         run: |
-          $testProcess = Start-Process -FilePath ".\dist\VANTA-Launcher.exe" -ArgumentList "--self-test" -Wait -PassThru
-          if ($testProcess.ExitCode -ne 0) {
-            throw "VANTA GUI startup self-test failed with exit code $($testProcess.ExitCode)"
-          }
-          Write-Host "VANTA GUI startup self-test passed."
+          $exe = ".\dist\VANTA-Launcher\VANTA-Launcher.exe"
+          if (-not (Test-Path $exe)) { throw "Built EXE not found: $exe" }
 
-      - name: Upload EXE
+          $testProcess = Start-Process -FilePath $exe -ArgumentList "--self-test" -Wait -PassThru
+          if ($testProcess.ExitCode -ne 0) {
+            throw "VANTA Tcl/Tk GUI self-test failed with exit code $($testProcess.ExitCode)"
+          }
+          Write-Host "VANTA bundled Tcl/Tk and GUI self-test passed."
+
+      - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
           name: VANTA-Launcher-Windows
-          path: VANTA_Launcher_0_2/dist/VANTA-Launcher.exe
+          path: VANTA_Launcher_0_2/dist/VANTA-Launcher/
           if-no-files-found: error
           retention-days: 14
