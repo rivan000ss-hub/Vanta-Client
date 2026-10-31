@@ -87,15 +87,29 @@ def download(url, destination):
     with urllib.request.urlopen(req, timeout=90) as response, open(destination, "wb") as out:
         shutil.copyfileobj(response, out)
 
-def find_java():
+def find_java(directory=None):
+    game_dir = Path(directory or MC_DIR)
+    try:
+        runtime_info = minecraft_launcher_lib.runtime.get_version_runtime_information(
+            MC_VERSION, str(game_dir)
+        )
+        if runtime_info and runtime_info.get("name"):
+            bundled = minecraft_launcher_lib.runtime.get_executable_path(
+                runtime_info["name"], str(game_dir)
+            )
+            if bundled and Path(bundled).is_file():
+                return bundled
+    except Exception:
+        pass
+
     java = shutil.which("java")
     if java:
         return java
     roots = [
-        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Java",
-        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Eclipse Adoptium",
+        Path(os.environ.get("ProgramFiles", r"C:\\Program Files")) / "Java",
+        Path(os.environ.get("ProgramFiles", r"C:\\Program Files")) / "Eclipse Adoptium",
         Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Eclipse Adoptium",
-        MC_DIR / "runtime",
+        game_dir / "runtime",
     ]
     for root in roots:
         if root.exists():
@@ -159,10 +173,6 @@ class InstallWorker(QThread):
 
     def run(self):
         try:
-            java = find_java()
-            if not java:
-                raise RuntimeError("Не найдена Java. Установи Java 21 x64 и добавь её в PATH.")
-
             last_status = ["Подготовка загрузки Minecraft"]
             self.progress.emit(2, "Проверка официальных файлов Minecraft")
             self.log.emit(f"Папка установки: {self.game_directory}")
@@ -184,34 +194,38 @@ class InstallWorker(QThread):
             minecraft_launcher_lib.install.install_minecraft_version(
                 MC_VERSION, str(self.game_directory), callback=callback
             )
-            self.progress.emit(44, "Установка Fabric Loader")
 
-            installers = request_json(FABRIC_META)
-            if not installers:
-                raise RuntimeError("Fabric не вернул список установщиков.")
-            installer = installers[0]
-            installer_url = installer.get("url") or installer.get("maven")
-            if not installer_url:
-                raise RuntimeError("Не найден URL Fabric Installer.")
-
-            jar = self.game_directory / "vanta-downloads" / "fabric-installer.jar"
-            self.log.emit("Загрузка Fabric Installer…")
-            download(installer_url, jar)
-            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
-            result = subprocess.run(
-                [java, "-jar", str(jar), "client", "-dir", str(self.game_directory),
-                 "-mcversion", MC_VERSION, "-loader", "latest"],
-                capture_output=True, text=True, errors="replace", timeout=300,
-                creationflags=flags, cwd=str(self.game_directory)
+            self.progress.emit(44, "Загрузка Java Runtime")
+            runtime_info = minecraft_launcher_lib.runtime.get_version_runtime_information(
+                MC_VERSION, str(self.game_directory)
             )
-            if result.returncode:
-                details = (result.stderr or result.stdout or "Fabric Installer завершился с ошибкой.")[-1800:]
-                raise RuntimeError(details)
+            java = None
+            if runtime_info and runtime_info.get("name"):
+                runtime_name = runtime_info["name"]
+                self.log.emit(f"Загружаю официальный Java Runtime: {runtime_name}…")
+                minecraft_launcher_lib.runtime.install_jvm_runtime(
+                    runtime_name, str(self.game_directory), callback=callback
+                )
+                java = minecraft_launcher_lib.runtime.get_executable_path(
+                    runtime_name, str(self.game_directory)
+                )
+            if not java:
+                java = find_java(self.game_directory)
+            if not java:
+                raise RuntimeError("Не удалось найти или установить Java Runtime для Minecraft.")
 
-            self.progress.emit(62, "Подготовка папки модов")
+            self.progress.emit(57, "Установка Fabric Loader")
+            self.log.emit("Устанавливаю Fabric Loader…")
+            fabric = minecraft_launcher_lib.mod_loader.get_mod_loader("fabric")
+            fabric_profile_id = fabric.install(
+                MC_VERSION, str(self.game_directory), java=java, callback=callback
+            )
+            self.log.emit(f"Fabric Loader установлен: {fabric_profile_id}")
+
+            self.progress.emit(66, "Подготовка папки модов")
             self.mods_directory.mkdir(parents=True, exist_ok=True)
             for i, project in enumerate(("fabric-api", "sodium")):
-                self.progress.emit(64 + i * 17, f"Загрузка {project}")
+                self.progress.emit(68 + i * 15, f"Загрузка {project}")
                 url = MODRINTH_API.format(project) + "?" + urllib.parse.urlencode({
                     "game_versions": json.dumps([MC_VERSION]),
                     "loaders": json.dumps(["fabric"])
@@ -229,7 +243,7 @@ class InstallWorker(QThread):
             self.progress.emit(100, "Minecraft и сборка VANTA готовы")
             self.done.emit(
                 True,
-                f"Minecraft {MC_VERSION}, Fabric Loader, Fabric API и Sodium установлены в:\n"
+                f"Minecraft {MC_VERSION}, Java Runtime, Fabric Loader, Fabric API и Sodium установлены в:\n"
                 f"{self.game_directory}\n\nДля запуска выполни вход Microsoft с аккаунтом, "
                 "у которого есть Minecraft: Java Edition."
             )
