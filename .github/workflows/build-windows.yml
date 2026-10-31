@@ -45,8 +45,6 @@ jobs:
 
           "VANTA_TCL_DIR=$($tclDir.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "VANTA_TK_DIR=$($tkDir.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "Tcl library: $($tclDir.FullName)"
-          Write-Host "Tk library: $($tkDir.FullName)"
 
       - name: Compile-check Python source
         working-directory: VANTA_Launcher_0_2
@@ -57,18 +55,17 @@ jobs:
         shell: pwsh
         run: pyinstaller --noconfirm --clean --onedir --windowed --name VANTA-Launcher --add-data "$env:VANTA_TCL_DIR;_tcl_data" --add-data "$env:VANTA_TK_DIR;_tk_data" vanta_launcher.py
 
-      - name: Smoke-test bundled Tcl/Tk and GUI
+      - name: Smoke-test Tcl/Tk, pages, and button wiring
         working-directory: VANTA_Launcher_0_2
         shell: pwsh
         run: |
           $exe = ".\dist\VANTA-Launcher\VANTA-Launcher.exe"
           if (-not (Test-Path $exe)) { throw "Built EXE not found: $exe" }
-
           $testProcess = Start-Process -FilePath $exe -ArgumentList "--self-test" -Wait -PassThru
           if ($testProcess.ExitCode -ne 0) {
-            throw "VANTA Tcl/Tk GUI self-test failed with exit code $($testProcess.ExitCode)"
+            throw "VANTA GUI self-test failed with exit code $($testProcess.ExitCode)"
           }
-          Write-Host "VANTA bundled Tcl/Tk and GUI self-test passed."
+          Write-Host "VANTA Tcl/Tk, navigation, and button-wiring test passed."
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v4

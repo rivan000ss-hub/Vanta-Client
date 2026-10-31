@@ -20,25 +20,22 @@ if not defined VANTA_TK_DIR (
   goto :error
 )
 
-echo Tcl: %VANTA_TCL_DIR%
-echo Tk:  %VANTA_TK_DIR%
-
 echo [3/4] Checking Python syntax...
 py -m py_compile vanta_launcher.py
 if errorlevel 1 goto :error
 
-echo [4/4] Building Windows package...
+echo [4/4] Building VANTA...
 py -m PyInstaller --noconfirm --clean --onedir --windowed --name VANTA-Launcher --add-data "%VANTA_TCL_DIR%;_tcl_data" --add-data "%VANTA_TK_DIR%;_tk_data" vanta_launcher.py
 if errorlevel 1 goto :error
 
 echo.
 echo Build complete: dist\VANTA-Launcher\VANTA-Launcher.exe
 echo Run the EXE from inside the complete VANTA-Launcher folder.
-echo Running packaged GUI startup test...
+echo Running GUI and button-wiring self-test...
 dist\VANTA-Launcher\VANTA-Launcher.exe --self-test
 if errorlevel 1 goto :error
 
-echo VANTA bundled Tcl/Tk and GUI self-test passed.
+echo VANTA build and self-test passed.
 pause
 exit /b 0
 
