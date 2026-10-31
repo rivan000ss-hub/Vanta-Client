@@ -161,10 +161,11 @@ class VantaApp:
     def _worker(self, fn):
         try:
             fn()
-        except Exception as e:
-            self.root.after(0, lambda: self.log_line("ОШИБКА: " + str(e)))
+        except Exception as exc:
+            error_text = str(exc)
+            self.root.after(0, lambda msg=error_text: self.log_line("ОШИБКА: " + msg))
             self.root.after(0, lambda: self.set_status("Не удалось завершить операцию. См. журнал."))
-            self.root.after(0, lambda: messagebox.showerror("VANTA", str(e)))
+            self.root.after(0, lambda msg=error_text: messagebox.showerror("VANTA", msg))
         finally:
             self.busy = False
             self.root.after(0, lambda: self.install_btn.configure(state="normal"))
@@ -225,10 +226,17 @@ class VantaApp:
                 Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WindowsApps" / "Minecraft.exe",
             ]
             launcher = next((p for p in candidates if p.exists()), None)
-            if launcher:
-                os.startfile(str(launcher))
-            else:
-                os.startfile("minecraft://")
+            try:
+                if launcher:
+                    os.startfile(str(launcher))
+                else:
+                    os.startfile("minecraft://")
+            except OSError as exc:
+                messagebox.showerror(
+                    "VANTA",
+                    "Не удалось открыть Minecraft Launcher. Убедись, что официальный лаунчер установлен.\n\n" + str(exc)
+                )
+                return
         else:
             messagebox.showinfo("VANTA", "Открой официальный Minecraft Launcher и выбери профиль Fabric Loader 1.21.11.")
         self.set_status("Открой профиль Fabric Loader 1.21.11 в официальном лаунчере.")
@@ -243,6 +251,16 @@ class VantaApp:
             subprocess.Popen(["xdg-open", str(MC_DIR)])
 
 if __name__ == "__main__":
+    # CI smoke test: create the real launcher UI and exit without entering the event loop.
+    if "--self-test" in sys.argv:
+        test_root = tk.Tk()
+        test_root.withdraw()
+        VantaApp(test_root)
+        test_root.update_idletasks()
+        test_root.update()
+        test_root.destroy()
+        raise SystemExit(0)
+
     root = tk.Tk()
     app = VantaApp(root)
     root.mainloop()
