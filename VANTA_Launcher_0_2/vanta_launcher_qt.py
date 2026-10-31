@@ -5,18 +5,24 @@ import shutil
 import subprocess
 import urllib.request
 import urllib.parse
+import webbrowser
+import time
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
+
+import minecraft_launcher_lib
 
 from PySide6.QtCore import Qt, QThread, Signal, QUrl, QTimer
 from PySide6.QtGui import QColor, QPainter, QLinearGradient, QFont
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QLabel, QPushButton,
     QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QProgressBar,
-    QTextEdit, QMessageBox, QFileDialog, QSlider, QCheckBox, QSizePolicy
+    QTextEdit, QMessageBox, QFileDialog, QSlider, QCheckBox, QSizePolicy,
+    QInputDialog
 )
 from PySide6.QtGui import QDesktopServices
 
-APP_VERSION = "0.4"
+APP_VERSION = "0.5"
 MC_VERSION = "1.21.11"
 FABRIC_META = "https://meta.fabricmc.net/v2/versions/installer"
 MODRINTH_API = "https://api.modrinth.com/v2/project/{}/version"
@@ -37,8 +43,38 @@ def minecraft_dir():
         return Path.home() / "Library/Application Support/minecraft"
     return Path.home() / ".minecraft"
 
-MC_DIR = minecraft_dir()
+def app_config_path():
+    if sys.platform == "win32":
+        root = Path(os.environ.get("APPDATA", str(Path.home()))) / "VANTA"
+    elif sys.platform == "darwin":
+        root = Path.home() / "Library" / "Application Support" / "VANTA"
+    else:
+        root = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "vanta"
+    root.mkdir(parents=True, exist_ok=True)
+    return root / "settings.json"
+
+
+def load_settings():
+    try:
+        with app_config_path().open("r", encoding="utf-8") as stream:
+            data = json.load(stream)
+            return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+SETTINGS = load_settings()
+MC_DIR = Path(SETTINGS.get("game_directory") or minecraft_dir()).expanduser()
 MODS_DIR = MC_DIR / "mods"
+
+
+def save_settings():
+    SETTINGS["game_directory"] = str(MC_DIR)
+    target = app_config_path()
+    temp = target.with_suffix(".tmp")
+    with temp.open("w", encoding="utf-8") as stream:
+        json.dump(SETTINGS, stream, ensure_ascii=False, indent=2)
+    temp.replace(target)
 
 def request_json(url):
     req = urllib.request.Request(url, headers={"User-Agent": "VANTA-Launcher/0.4"})
@@ -68,8 +104,8 @@ def find_java():
                     return str(item)
     return None
 
-def find_fabric_profile():
-    versions = MC_DIR / "versions"
+def find_fabric_profile(directory=None):
+    versions = Path(directory or MC_DIR) / "versions"
     if not versions.is_dir():
         return None
     profiles = [p for p in versions.iterdir() if p.is_dir()
@@ -115,12 +151,41 @@ class InstallWorker(QThread):
     progress = Signal(int, str)
     log = Signal(str)
     done = Signal(bool, str)
+
+    def __init__(self, game_directory):
+        super().__init__()
+        self.game_directory = Path(game_directory)
+        self.mods_directory = self.game_directory / "mods"
+
     def run(self):
         try:
             java = find_java()
             if not java:
                 raise RuntimeError("Не найдена Java. Установи Java 21 x64 и добавь её в PATH.")
-            self.progress.emit(5, "Получение установщика Fabric")
+
+            last_status = ["Подготовка загрузки Minecraft"]
+            self.progress.emit(2, "Проверка официальных файлов Minecraft")
+            self.log.emit(f"Папка установки: {self.game_directory}")
+
+            def set_status(status):
+                last_status[0] = str(status)
+                self.progress.emit(5, last_status[0])
+
+            def set_max(maximum):
+                self._progress_max = max(1, int(maximum))
+
+            def set_progress(value):
+                maximum = max(1, getattr(self, "_progress_max", 100))
+                percent = min(42, 5 + int(37 * int(value) / maximum))
+                self.progress.emit(percent, last_status[0])
+
+            callback = {"setStatus": set_status, "setProgress": set_progress, "setMax": set_max}
+            self.log.emit(f"Загружаю официальные файлы Minecraft {MC_VERSION}…")
+            minecraft_launcher_lib.install.install_minecraft_version(
+                MC_VERSION, str(self.game_directory), callback=callback
+            )
+            self.progress.emit(44, "Установка Fabric Loader")
+
             installers = request_json(FABRIC_META)
             if not installers:
                 raise RuntimeError("Fabric не вернул список установщиков.")
@@ -128,22 +193,25 @@ class InstallWorker(QThread):
             installer_url = installer.get("url") or installer.get("maven")
             if not installer_url:
                 raise RuntimeError("Не найден URL Fabric Installer.")
-            jar = MC_DIR / "vanta-downloads" / "fabric-installer.jar"
+
+            jar = self.game_directory / "vanta-downloads" / "fabric-installer.jar"
             self.log.emit("Загрузка Fabric Installer…")
             download(installer_url, jar)
-            self.progress.emit(28, "Установка Fabric Loader")
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
             result = subprocess.run(
-                [java, "-jar", str(jar), "client", "-dir", str(MC_DIR),
+                [java, "-jar", str(jar), "client", "-dir", str(self.game_directory),
                  "-mcversion", MC_VERSION, "-loader", "latest"],
-                capture_output=True, text=True, errors="replace", timeout=240,
-                creationflags=flags
+                capture_output=True, text=True, errors="replace", timeout=300,
+                creationflags=flags, cwd=str(self.game_directory)
             )
             if result.returncode:
-                raise RuntimeError((result.stderr or result.stdout or "Fabric Installer завершился с ошибкой.")[-1800:])
-            MODS_DIR.mkdir(parents=True, exist_ok=True)
+                details = (result.stderr or result.stdout or "Fabric Installer завершился с ошибкой.")[-1800:]
+                raise RuntimeError(details)
+
+            self.progress.emit(62, "Подготовка папки модов")
+            self.mods_directory.mkdir(parents=True, exist_ok=True)
             for i, project in enumerate(("fabric-api", "sodium")):
-                self.progress.emit(48 + i*24, f"Загрузка {project}")
+                self.progress.emit(64 + i * 17, f"Загрузка {project}")
                 url = MODRINTH_API.format(project) + "?" + urllib.parse.urlencode({
                     "game_versions": json.dumps([MC_VERSION]),
                     "loaders": json.dumps(["fabric"])
@@ -155,12 +223,118 @@ class InstallWorker(QThread):
                 primary = next((x for x in files if x.get("primary")), files[0] if files else None)
                 if not primary or not primary.get("url") or not primary.get("filename"):
                     raise RuntimeError(f"Modrinth не вернул файл {project}.")
-                download(primary["url"], MODS_DIR / primary["filename"])
+                download(primary["url"], self.mods_directory / primary["filename"])
                 self.log.emit(f"Установлен {project} {versions[0].get('version_number', '')}")
-            self.progress.emit(100, "Сборка VANTA установлена")
-            self.done.emit(True, "Установка завершена. Выбери профиль Fabric в своём игровом лаунчере.")
-        except Exception as e:
-            self.done.emit(False, str(e))
+
+            self.progress.emit(100, "Minecraft и сборка VANTA готовы")
+            self.done.emit(
+                True,
+                f"Minecraft {MC_VERSION}, Fabric Loader, Fabric API и Sodium установлены в:\n"
+                f"{self.game_directory}\n\nДля запуска выполни вход Microsoft с аккаунтом, "
+                "у которого есть Minecraft: Java Edition."
+            )
+        except Exception as exc:
+            self.done.emit(False, str(exc))
+
+
+class LoginWorker(QThread):
+    done = Signal(bool, object)
+
+    def __init__(self, client_id):
+        super().__init__()
+        self.client_id = client_id
+
+    def run(self):
+        server = None
+        try:
+            from minecraft_launcher_lib import microsoft_account
+
+            class CallbackHandler(BaseHTTPRequestHandler):
+                def do_GET(self):
+                    self.server.callback_path = self.path
+                    body = (
+                        "<html><meta charset='utf-8'><body style='font-family:Segoe UI;background:#10131a;color:#fff'>"
+                        "<h2>VANTA</h2><p>Вход завершён. Можно закрыть эту вкладку и вернуться в лаунчер.</p></body></html>"
+                    ).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+
+                def log_message(self, *_args):
+                    return
+
+            server = HTTPServer(("localhost", 0), CallbackHandler)
+            server.timeout = 1
+            redirect_uri = f"http://localhost:{server.server_port}"
+            login_url, state, verifier = microsoft_account.get_secure_login_data(
+                self.client_id, redirect_uri
+            )
+            webbrowser.open(login_url)
+
+            deadline = time.monotonic() + 300
+            while time.monotonic() < deadline and not self.isInterruptionRequested():
+                server.handle_request()
+                callback_path = getattr(server, "callback_path", None)
+                if callback_path:
+                    full_url = redirect_uri + callback_path
+                    code = microsoft_account.parse_auth_code_url(full_url, state)
+                    account = microsoft_account.complete_login(
+                        self.client_id, None, redirect_uri, code, verifier
+                    )
+                    self.done.emit(True, account)
+                    return
+
+            if self.isInterruptionRequested():
+                raise RuntimeError("Вход отменён.")
+            raise RuntimeError("Время ожидания входа Microsoft истекло.")
+        except Exception as exc:
+            self.done.emit(False, str(exc))
+        finally:
+            if server is not None:
+                server.server_close()
+
+
+class LaunchWorker(QThread):
+    done = Signal(bool, str)
+
+    def __init__(self, game_directory, account):
+        super().__init__()
+        self.game_directory = Path(game_directory)
+        self.account = dict(account)
+
+    def run(self):
+        try:
+            profile = find_fabric_profile(self.game_directory)
+            if not profile:
+                raise RuntimeError("Профиль Fabric не найден. Сначала установи сборку VANTA.")
+            java = find_java()
+            if not java:
+                raise RuntimeError("Не найдена Java 21 x64.")
+
+            options = {
+                "username": self.account["name"],
+                "uuid": self.account["id"],
+                "token": self.account["access_token"],
+                "launcherName": "VANTA",
+                "launcherVersion": APP_VERSION,
+                "executablePath": java,
+                "defaultExecutablePath": java,
+                "gameDirectory": str(self.game_directory),
+            }
+            command = minecraft_launcher_lib.command.get_minecraft_command(
+                profile.name, str(self.game_directory), options
+            )
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+            subprocess.Popen(
+                command, cwd=str(self.game_directory), creationflags=flags,
+                close_fds=(os.name != "nt")
+            )
+            self.done.emit(True, f"Minecraft запущен из профиля {profile.name}.")
+        except Exception as exc:
+            self.done.emit(False, str(exc))
+
 
 class VantaWindow(QMainWindow):
     def __init__(self):
@@ -169,6 +343,9 @@ class VantaWindow(QMainWindow):
         self.resize(1180, 760)
         self.setMinimumSize(940, 640)
         self.worker = None
+        self.login_worker = None
+        self.launch_worker = None
+        self.account_data = None
         self.buttons = {}
         self.pages = QStackedWidget()
         self.setStyleSheet(STYLE)
@@ -260,7 +437,13 @@ class VantaWindow(QMainWindow):
         row.addLayout(details)
         pl.addLayout(row)
         pl.addSpacing(8)
-        pl.addWidget(QLabel("Локальный режим • без аккаунта VANTA"))
+        self.account_label = QLabel("Не выполнен вход")
+        self.account_label.setObjectName("mutedSmall")
+        pl.addWidget(self.account_label)
+        self.login_button = QPushButton("Войти через Microsoft")
+        self.login_button.setObjectName("secondary")
+        self.login_button.clicked.connect(self.start_login)
+        pl.addWidget(self.login_button)
         sl.addWidget(profile)
         version = QLabel(f"VANTA {APP_VERSION}   /   {MC_VERSION}")
         version.setObjectName("mutedSmall")
@@ -405,13 +588,43 @@ class VantaWindow(QMainWindow):
         check.setObjectName("secondary")
         check.clicked.connect(self.diagnostics)
         sl.addWidget(check, alignment=Qt.AlignmentFlag.AlignLeft)
-        pathcard, pl = self.panel("Папка игры", str(MC_DIR))
-        choose = QPushButton("Открыть папку игры")
-        choose.setObjectName("secondary")
-        choose.clicked.connect(lambda: open_path(MC_DIR))
-        pl.addWidget(choose, alignment=Qt.AlignmentFlag.AlignLeft)
+        pathcard, pl = self.panel("Папка установки Minecraft", "Выбери отдельную папку для файлов игры, версий, библиотек и модов VANTA.")
+        self.game_dir_label = QLabel(str(MC_DIR))
+        self.game_dir_label.setObjectName("bodyText")
+        self.game_dir_label.setWordWrap(True)
+        pl.addWidget(self.game_dir_label)
+        choose_row = QHBoxLayout()
+        choose = QPushButton("Выбрать папку…")
+        choose.setObjectName("primary")
+        choose.clicked.connect(self.choose_game_directory)
+        open_game = QPushButton("Открыть папку")
+        open_game.setObjectName("secondary")
+        open_game.clicked.connect(lambda: open_path(MC_DIR))
+        choose_row.addWidget(choose)
+        choose_row.addWidget(open_game)
+        choose_row.addStretch()
+        pl.addLayout(choose_row)
+
+        authcard, al = self.panel("Microsoft", "Для запуска нужен Microsoft Client ID приложения VANTA. Client ID — публичный идентификатор, пароль от аккаунта лаунчер не запрашивает.")
+        self.client_id_label = QLabel("Client ID: " + (SETTINGS.get("microsoft_client_id") or "не задан"))
+        self.client_id_label.setObjectName("muted")
+        self.client_id_label.setWordWrap(True)
+        al.addWidget(self.client_id_label)
+        auth_actions = QHBoxLayout()
+        set_client = QPushButton("Настроить Client ID")
+        set_client.setObjectName("secondary")
+        set_client.clicked.connect(self.configure_client_id)
+        sign_in = QPushButton("Войти через Microsoft")
+        sign_in.setObjectName("primary")
+        sign_in.clicked.connect(self.start_login)
+        auth_actions.addWidget(set_client)
+        auth_actions.addWidget(sign_in)
+        auth_actions.addStretch()
+        al.addLayout(auth_actions)
+
         layout.addWidget(syscard)
         layout.addWidget(pathcard)
+        layout.addWidget(authcard)
         layout.addStretch()
 
     def navigate(self, key):
@@ -439,6 +652,14 @@ class VantaWindow(QMainWindow):
         self.fabric_label.setText(f"Fabric: {profile.name if profile else 'не установлен'}")
         installed = [p for p in mod_files() if p.suffix == ".jar"]
         self.home_mods.setText("\\n".join([f"•  {p.name}" for p in installed[:4]]) or "Пока нет установленных модов.")
+        if hasattr(self, "game_dir_label"):
+            self.game_dir_label.setText(str(MC_DIR))
+        if hasattr(self, "client_id_label"):
+            self.client_id_label.setText("Client ID: " + (SETTINGS.get("microsoft_client_id") or "не задан"))
+        if hasattr(self, "account_label"):
+            self.account_label.setText(self.account_data.get("name") if self.account_data else "Не выполнен вход")
+        if hasattr(self, "login_button"):
+            self.login_button.setText("Выйти" if self.account_data else "Войти через Microsoft")
     
     def refresh_mods(self):
         while self.mod_list.count():
@@ -484,7 +705,7 @@ class VantaWindow(QMainWindow):
         if self.worker and self.worker.isRunning():
             return
         self.status.setText("●  УСТАНОВКА…")
-        self.worker = InstallWorker()
+        self.worker = InstallWorker(MC_DIR)
         self.worker.progress.connect(self.on_progress)
         self.worker.log.connect(lambda text: self.statusBar().showMessage(text, 8000))
         self.worker.done.connect(self.on_install_done)
@@ -499,33 +720,118 @@ class VantaWindow(QMainWindow):
         self.refresh_state()
         QMessageBox.information(self, "VANTA", message) if success else QMessageBox.critical(self, "Ошибка установки", message)
 
+    def choose_game_directory(self):
+        global MC_DIR, MODS_DIR
+        selected = QFileDialog.getExistingDirectory(
+            self, "Выбери папку установки Minecraft", str(MC_DIR)
+        )
+        if not selected:
+            return
+        MC_DIR = Path(selected).expanduser().resolve()
+        MODS_DIR = MC_DIR / "mods"
+        try:
+            save_settings()
+        except OSError as exc:
+            QMessageBox.critical(self, "VANTA", str(exc))
+            return
+        self.refresh_state()
+        self.statusBar().showMessage(f"Папка игры: {MC_DIR}", 8000)
+
+    def configure_client_id(self):
+        current = SETTINGS.get("microsoft_client_id", "")
+        value, accepted = QInputDialog.getText(
+            self, "Microsoft App Client ID",
+            "Вставь Application (client) ID своего приложения Microsoft:",
+            text=current
+        )
+        if not accepted:
+            return
+        value = value.strip()
+        if not value:
+            QMessageBox.warning(self, "VANTA", "Client ID не может быть пустым.")
+            return
+        SETTINGS["microsoft_client_id"] = value
+        try:
+            save_settings()
+        except OSError as exc:
+            QMessageBox.critical(self, "VANTA", str(exc))
+            return
+        self.refresh_state()
+        QMessageBox.information(
+            self, "VANTA",
+            "Client ID сохранён. В Azure для приложения добавь Desktop / Mobile redirect URI http://localhost. "
+            "Для доступа к Minecraft Services приложению также требуется соответствующее разрешение Microsoft."
+        )
+
+    def start_login(self):
+        if self.account_data:
+            self.account_data = None
+            self.refresh_state()
+            self.status.setText("●  ВЫХОД ВЫПОЛНЕН")
+            return
+        client_id = SETTINGS.get("microsoft_client_id", "").strip()
+        if not client_id:
+            QMessageBox.information(
+                self, "Вход Microsoft",
+                "Сначала укажи Client ID приложения Microsoft в разделе Настройки. Это публичный ID, не пароль."
+            )
+            self.navigate("settings")
+            return
+        if self.login_worker and self.login_worker.isRunning():
+            return
+        self.login_button.setEnabled(False)
+        self.status.setText("●  ОЖИДАНИЕ MICROSOFT…")
+        self.login_worker = LoginWorker(client_id)
+        self.login_worker.done.connect(self.on_login_done)
+        self.login_worker.start()
+
+    def on_login_done(self, success, result):
+        self.login_button.setEnabled(True)
+        if success:
+            self.account_data = result
+            self.refresh_state()
+            self.status.setText("●  MICROSOFT ПОДКЛЮЧЁН")
+            QMessageBox.information(
+                self, "VANTA",
+                f"Вход выполнен: {result.get('name', 'Minecraft Player')}\\n"
+                "Теперь можно запускать Fabric из VANTA."
+            )
+        else:
+            self.status.setText("●  ВХОД НЕ ВЫПОЛНЕН")
+            QMessageBox.critical(self, "Ошибка входа Microsoft", str(result))
+
     def play(self):
         profile = find_fabric_profile()
         if not profile:
-            answer = QMessageBox.question(self, "Сборка не установлена",
-                "Профиль Fabric не найден. Установить сборку VANTA?")
+            answer = QMessageBox.question(
+                self, "Сборка не установлена",
+                "Minecraft и профиль Fabric не найдены в выбранной папке. Установить сборку VANTA?"
+            )
             if answer == QMessageBox.StandardButton.Yes:
                 self.navigate("versions")
                 self.start_install()
             return
-        if sys.platform == "win32":
-            candidates = [
-                Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Minecraft Launcher" / "MinecraftLauncher.exe",
-                Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Minecraft Launcher" / "MinecraftLauncher.exe",
-                Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Minecraft Launcher" / "MinecraftLauncher.exe"
-            ]
-            launcher = next((p for p in candidates if p.is_file()), None)
-            try:
-                if launcher:
-                    os.startfile(str(launcher))
-                else:
-                    os.startfile("minecraft://")
-            except Exception as e:
-                QMessageBox.critical(self, "VANTA", str(e))
+        if not self.account_data:
+            answer = QMessageBox.question(
+                self, "Требуется вход Microsoft",
+                "Для настоящего запуска Minecraft нужен Microsoft-аккаунт с Minecraft: Java Edition. Выполнить вход?"
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self.start_login()
+            return
+        if self.launch_worker and self.launch_worker.isRunning():
+            return
+        self.status.setText("●  ЗАПУСК MINECRAFT…")
+        self.launch_worker = LaunchWorker(MC_DIR, self.account_data)
+        self.launch_worker.done.connect(self.on_launch_done)
+        self.launch_worker.start()
+
+    def on_launch_done(self, success, message):
+        self.status.setText("●  ИГРА ЗАПУЩЕНА" if success else "●  ОШИБКА ЗАПУСКА")
+        if success:
+            self.statusBar().showMessage(message, 10000)
         else:
-            QDesktopServices.openUrl(QUrl("minecraft://"))
-        QMessageBox.information(self, "VANTA",
-            f"Профиль {profile.name} найден. Выбери Fabric в игровом лаунчере. Прямой запуск из VANTA пока не подключён.")
+            QMessageBox.critical(self, "VANTA — ошибка запуска", message)
 
     def diagnostics(self):
         java = find_java()
