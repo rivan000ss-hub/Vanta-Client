@@ -24,6 +24,30 @@ def minecraft_dir():
 MC_DIR = minecraft_dir()
 MODS_DIR = MC_DIR / "mods"
 
+def configure_packaged_tcl_tk():
+    """Point Tkinter at the actual Tcl/Tk script directories inside a frozen EXE."""
+    if not getattr(sys, "frozen", False):
+        return
+
+    bundle_dir = Path(sys._MEIPASS)
+    required_files = (
+        ("_tcl_data", "init.tcl", "TCL_LIBRARY"),
+        ("_tk_data", "tk.tcl", "TK_LIBRARY"),
+    )
+
+    for folder_name, marker_name, env_name in required_files:
+        folder = bundle_dir / folder_name
+        marker = folder / marker_name
+        if not marker.is_file() and folder.is_dir():
+            marker = next(folder.rglob(marker_name), None)
+        if marker is None or not marker.is_file():
+            raise RuntimeError(
+                f"В сборке VANTA отсутствует {marker_name}. "
+                f"Проверь содержимое папки {folder_name}."
+            )
+        os.environ[env_name] = str(marker.parent)
+
+
 def request_json(url):
     req = urllib.request.Request(url, headers={"User-Agent": "VANTA-Launcher/0.1 (launcher prototype)"})
     with urllib.request.urlopen(req, timeout=30) as response:
@@ -251,8 +275,13 @@ class VantaApp:
             subprocess.Popen(["xdg-open", str(MC_DIR)])
 
 if __name__ == "__main__":
-    # CI smoke test: create the real launcher UI and exit without entering the event loop.
+    # Set Tcl/Tk paths before initializing any Tcl interpreter or Tk window.
+    configure_packaged_tcl_tk()
+
+    # CI smoke test: initialize Tcl, build the real UI, update it, and exit.
     if "--self-test" in sys.argv:
+        tcl = tk.Tcl()
+        tcl.eval("info library")
         test_root = tk.Tk()
         test_root.withdraw()
         VantaApp(test_root)
